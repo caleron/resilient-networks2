@@ -1,5 +1,6 @@
 #include <iostream>
 #include <map>
+#include <unordered_map>
 #include <vector>
 #include <pcap.h>
 #include <pcap/bpf.h>
@@ -15,6 +16,40 @@
 #include <set>
 
 using namespace std;
+struct Layer4Flow_t;
+struct IPv4Flow_t;
+
+struct IPv4Flow_t {
+    in_addr source;
+    in_addr destination;
+
+    bool const operator==(const IPv4Flow_t &o) const {
+        return source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr;
+    }
+
+    size_t operator()(const IPv4Flow_t &flow) const {
+        return flow.source.s_addr + flow.destination.s_addr;
+    }
+};
+
+struct Layer4Flow_t {
+    in_addr source;
+    in_addr destination;
+    uint16_t source_port;
+    uint16_t destination_port;
+    // true for tcp, false for udp
+    bool is_tcp;
+
+    bool const operator==(const Layer4Flow_t &o) const {
+        return source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr &&
+               source_port == o.source_port
+               && destination_port == o.destination_port && is_tcp == o.is_tcp;
+    }
+
+    size_t operator()(const Layer4Flow_t &flow) const {
+        return flow.destination.s_addr + flow.source.s_addr + flow.destination_port + flow.source_port + flow.is_tcp;
+    }
+};
 
 struct UserData {
     // Link type
@@ -30,6 +65,8 @@ struct UserData {
     unsigned long long int tcp_payload = 0;
     unsigned long long int total_pcap_captured_bytes = 0;
     unsigned long long int total_pcap_bytes = 0;
+    unordered_map<IPv4Flow_t, int, IPv4Flow_t> layer_3_flows;
+    unordered_map<Layer4Flow_t, int, Layer4Flow_t> layer_4_flows;
 };
 
 void increaseCounter(unsigned long long int &counter);
@@ -176,6 +213,18 @@ int main(int argc, char *argv[]) {
     cout << "Total TCP payload bytes: " << to_string(userData.tcp_payload) << endl;
     cout << "Total UDP payload bytes: " << to_string(userData.udp_payload) << endl;
 
+    cout << "IPv4 flows: " << userData.layer_3_flows.size() << endl;
+    cout << "TCP/UPD flows: " << userData.layer_4_flows.size() << endl;
+    // TODO find and output only the biggest flows
+//    for (auto &it : userData.layer_3_flows) {
+//        cout << "IPv4 flow from " << inet_ntoa(it.first.source) << " to " << inet_ntoa(it.first.destination) <<
+//             ": " << it.second << endl;
+//    }
+//    for (auto &it : userData.layer_4_flows) {
+//        cout << "Layer4 flow from " << inet_ntoa(it.first.source) << " to " << inet_ntoa(it.first.destination) <<
+//             ": " << it.second << endl;
+//    }
+
     // Everything comes to an end...
     return 0;
 }
@@ -243,6 +292,18 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
             }
             ud->ipv4_payload += ip_packet_payload_length;
 
+
+            // insert the IPv4 flow
+            IPv4Flow_t iPv4Flow = {};
+            iPv4Flow.source = ip->ip_src;
+            iPv4Flow.destination = ip->ip_dst;
+
+            if (ud->layer_3_flows.count(iPv4Flow) > 0) {
+                ud->layer_3_flows[iPv4Flow] += ip_packet_payload_length;
+            } else {
+                ud->layer_3_flows[iPv4Flow] = ip_packet_payload_length;
+            }
+
             // count the layer 4 protocols inside IPv4
             if (ud->layer_4_protocol_counter.find(ip->ip_p) == ud->layer_4_protocol_counter.end()) {
                 // protocol is not in the map, set to 1
@@ -250,6 +311,10 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
             } else {
                 ud->layer_4_protocol_counter[ip->ip_p]++;
             }
+
+            Layer4Flow_t layer4Flow = {};
+            layer4Flow.source = ip->ip_src;
+            layer4Flow.destination = ip->ip_dst;
 
             if (ip->ip_p == IPPROTO_TCP) {
                 const struct tcphdr *tcp_header;
@@ -261,7 +326,20 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                 // sometimes the tcp header is bigger than the possible left payload
                 if (tcp_header_size < ip_packet_payload_length) {
                     ud->tcp_payload += ip_packet_payload_length - tcp_header_size;
+
+                    // insert the flow
+                    layer4Flow.source_port = tcp_header->th_sport;
+                    layer4Flow.destination_port = tcp_header->th_dport;
+                    layer4Flow.is_tcp = true;
+
+                    if (ud->layer_4_flows.count(layer4Flow) > 0) {
+                        ud->layer_4_flows[layer4Flow] += ip_packet_payload_length - tcp_header_size;
+                    } else {
+                        ud->layer_4_flows[layer4Flow] = ip_packet_payload_length - tcp_header_size;
+                    }
                 }
+
+
             } else if (ip->ip_p == IPPROTO_UDP) {
                 const struct udphdr *udp_header;
                 // ip payload should start directly after ip header
@@ -270,6 +348,19 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                 // udp payload is total length minus header length
                 if (UDP_HEADER_SIZE < ip_packet_payload_length) {
                     ud->udp_payload += ip_packet_payload_length - UDP_HEADER_SIZE;
+
+
+                    // insert the flow
+                    layer4Flow.source_port = udp_header->uh_sport;
+                    layer4Flow.destination_port = udp_header->uh_dport;
+                    layer4Flow.is_tcp = false;
+
+                    if (ud->layer_4_flows.count(layer4Flow) > 0) {
+                        ud->layer_4_flows[layer4Flow] += ip_packet_payload_length - UDP_HEADER_SIZE;
+                    } else {
+                        ud->layer_4_flows[layer4Flow] = ip_packet_payload_length - UDP_HEADER_SIZE;
+                    }
+
                 } else {
                     // never happens
                     cout << "udp header greater than remaining payload" << endl;
