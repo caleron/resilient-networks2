@@ -275,11 +275,6 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                     cout << "udp header greater than remaining payload" << endl;
                 }
             }
-
-            // just for security check - remove later
-            if (ip_packet_payload_length <= 0) {
-                cout << "no payload ???" << endl;
-            }
         } else {
             // does never happen, remove in final version
             cout << "IP packet was not IPv4!!!" << endl;
