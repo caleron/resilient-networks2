@@ -19,6 +19,9 @@ using namespace std;
 struct Layer4Flow_t;
 struct IPv4Flow_t;
 
+string readable_bytes(uint64_t size);
+
+
 struct IPv4Flow_t {
     in_addr source;
     in_addr destination;
@@ -120,14 +123,14 @@ int main(int argc, char *argv[]) {
     }
 
     // Print statistics
-    cout << "Number of pcap observer traffic: " << userData.total_pcap_bytes << endl;
-    cout << "Number of bytes pcap actually captured: " << userData.total_pcap_captured_bytes << endl;
+    cout << "Number of pcap observer traffic: " << readable_bytes(userData.total_pcap_bytes) << endl;
+    cout << "Number of bytes pcap actually captured: " << readable_bytes(userData.total_pcap_captured_bytes) << endl;
 
     cout << "Number of processed packets: " << userData.packet_counter << endl;
 
     cout << "Number of different IPv4 addresses: " << to_string(userData.found_ips.size()) << endl;
 
-    cout << "Layer 3 Protocols: " << endl;
+    cout << "Layer 3 Protocols (with packet count): " << endl;
 
     for (auto &it : userData.layer_3_protocol_counter) {
         // some indent
@@ -175,9 +178,9 @@ int main(int argc, char *argv[]) {
         cout << to_string(it.second) << endl;
     }
 
-    cout << "Total IPv4 payload: " << to_string(userData.ipv4_payload) << endl;
+    cout << "Total IPv4 payload: " << readable_bytes(userData.ipv4_payload) << endl;
 
-    cout << "Layer 4 Protocols inside IPv4:" << endl;
+    cout << "Layer 4 Protocols inside IPv4 (with packet count):" << endl;
 
     for (auto &it : userData.layer_4_protocol_counter) {
         cout << "  ";
@@ -210,8 +213,8 @@ int main(int argc, char *argv[]) {
         cout << ": " << to_string(it.second) << endl;
     }
 
-    cout << "Total TCP payload bytes: " << to_string(userData.tcp_payload) << endl;
-    cout << "Total UDP payload bytes: " << to_string(userData.udp_payload) << endl;
+    cout << "Total TCP payload bytes: " << readable_bytes(userData.tcp_payload) << endl;
+    cout << "Total UDP payload bytes: " << readable_bytes(userData.udp_payload) << endl;
 
     cout << "IPv4 flows: " << userData.layer_3_flows.size() << endl;
     cout << "TCP/UPD flows: " << userData.layer_4_flows.size() << endl;
@@ -373,3 +376,14 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
     }
 }
 
+string readable_bytes(uint64_t bytes) {
+    long double size = bytes;
+    const char *units[] = {"B", "kB", "MB", "GB", "TB"};
+    int i;
+    for (i = 0; size > 1024; i++) {
+        size /= 1024;
+    }
+    auto *out = new char[10];
+    sprintf(out, "%Lf %s", size, units[i]);
+    return out;
+}
