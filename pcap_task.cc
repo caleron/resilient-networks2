@@ -188,6 +188,7 @@ void increaseCounter(unsigned long long int &counter) {
 #define ETHERNET_HEADER_SIZE 14
 // udp header has always 8 bytes
 #define UDP_HEADER_SIZE 8
+
 void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_char *packet) {
     // Setup variables
     const struct ether_header *ethernetHeader;
@@ -232,8 +233,14 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
 
             // the header length fields denotes the length in blocks of 32 bit = 4 byte
             unsigned int ip_header_size = ip->ip_hl * 4;
-            // payload should be the total packet size minus the header size
-            unsigned int ip_packet_payload_length = contained_packet_length - ip_header_size;
+            // payload should be the total packet size minus the header size (always: contained packet length > ip_header_size)
+            unsigned int ip_packet_payload_length = 0;
+            if (ip_header_size < contained_packet_length) {
+                ip_packet_payload_length = contained_packet_length - ip_header_size;
+            } else {
+                // never happens
+                cout << "IP header greater than the available data" << endl;
+            }
             ud->ipv4_payload += ip_packet_payload_length;
 
             // count the layer 4 protocols inside IPv4
@@ -251,13 +258,9 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                 // th_off is the header size in blocks of 32 bits (= 4byte)
                 int tcp_header_size = tcp_header->th_off * 4;
 
-                // this payload is about 895 trillion ... way too big ... idk why
-                ud->tcp_payload += ip_packet_payload_length - tcp_header_size;
-                if (ip_packet_payload_length > 2000) {
-                    cout << "huge package" << endl;
-                }
-                if (ip_packet_payload_length - tcp_header_size < 0) {
-                    cout << "no tcp payload??";
+                // sometimes the tcp header is bigger than the possible left payload
+                if (tcp_header_size < ip_packet_payload_length) {
+                    ud->tcp_payload += ip_packet_payload_length - tcp_header_size;
                 }
             } else if (ip->ip_p == IPPROTO_UDP) {
                 const struct udphdr *udp_header;
@@ -265,7 +268,12 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                 udp_header = (struct udphdr *) (packet + ETHERNET_HEADER_SIZE + ip->ip_hl);
 
                 // udp payload is total length minus header length
-                ud->udp_payload += ip_packet_payload_length - UDP_HEADER_SIZE;
+                if (UDP_HEADER_SIZE < ip_packet_payload_length) {
+                    ud->udp_payload += ip_packet_payload_length - UDP_HEADER_SIZE;
+                } else {
+                    // never happens
+                    cout << "udp header greater than remaining payload" << endl;
+                }
             }
 
             // just for security check - remove later
