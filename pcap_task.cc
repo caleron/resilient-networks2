@@ -423,11 +423,11 @@ void packetHandler2(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_
     // caplen is the available length in this capture
     ud->total_pcap_captured_bytes += pkthdr->caplen;
 
-    u_int contained_packet_length = pkthdr->len;
+    u_int contained_packet_length = pkthdr->len - 4;
 
     const struct ip *ip;
-    // ip packet begins after ethernet header
-    ip = (struct ip *) (packet);
+    // ip packet begins 4 crappy loopback bytes
+    ip = (struct ip *) (packet + 4);
 
     // only handle IPv4
     if (ip->ip_v == 4) {
@@ -445,13 +445,22 @@ void packetHandler2(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_
         if (ip->ip_p == IPPROTO_TCP) {
             const struct tcphdr *tcp_header;
             // ip payload should start directly after ip header
-            tcp_header = (struct tcphdr *) (packet + ip_header_size);
+            tcp_header = (struct tcphdr *) (packet + ip_header_size + 4);
             // th_off is the header size in blocks of 32 bits (= 4byte)
             int tcp_header_size = tcp_header->th_off * 4;
 
             // sometimes the tcp header is bigger than the possible left payload
             if (tcp_header_size < ip_packet_payload_length) {
+                string payload((char *) (packet + ip_header_size + tcp_header_size + 4));
+                unsigned long i = payload.find("HTTP", 0, 4);
 
+                //TODO parse the header by finding \r\n in a loop until two consecutive line breaks found
+
+                if (i == 0) {
+                    cout << "found http!" << endl;
+                }
+
+                cout << payload << endl;
             }
         }
     }
