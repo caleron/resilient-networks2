@@ -19,8 +19,11 @@ using namespace std;
 struct Layer4Flow_t;
 struct IPv4Flow_t;
 
-string readable_bytes(uint64_t size);
+struct UserData;
 
+void outputResults1(UserData ud);
+
+string readable_bytes(uint64_t size);
 
 struct IPv4Flow_t {
     in_addr source;
@@ -71,8 +74,8 @@ struct UserData {
     unsigned long long int tcp_payload = 0;
     unsigned long long int total_pcap_captured_bytes = 0;
     unsigned long long int total_pcap_bytes = 0;
-    unordered_map<IPv4Flow_t, uint64_t , IPv4Flow_t> layer_3_flows;
-    unordered_map<Layer4Flow_t, uint64_t , Layer4Flow_t> layer_4_flows;
+    unordered_map<IPv4Flow_t, uint64_t, IPv4Flow_t> layer_3_flows;
+    unordered_map<Layer4Flow_t, uint64_t, Layer4Flow_t> layer_4_flows;
 };
 
 void increaseCounter(unsigned long long int &counter);
@@ -80,6 +83,7 @@ void increaseCounter(unsigned long long int &counter);
 // Prototype that processes every packet
 void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_char *packet);
 
+void packetHandler2(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_char *packet);
 
 // Main of the programm
 int main(int argc, char *argv[]) {
@@ -114,17 +118,39 @@ int main(int argc, char *argv[]) {
 
     // check the link layer type
     userData.data_link = pcap_datalink(descr);
-    if (userData.data_link != DLT_EN10MB) {
+    if (userData.data_link != DLT_EN10MB && userData.data_link != DLT_NULL) {
         cout << "Cannot process link layer type " << userData.data_link << endl;
         return 1;
     }
 
     // start packet processing loop, just like live capture
-    if (pcap_loop(descr, nPackets, packetHandler, (unsigned char *) &userData) < 0) {
+    void (*handler)(u_char *, const pcap_pkthdr *, const u_char *);
+    if (userData.data_link == DLT_EN10MB) {
+        handler = packetHandler;
+    } else {
+        handler = packetHandler2;
+    }
+
+    if (pcap_loop(descr, nPackets, handler, (unsigned char *) &userData) < 0) {
         cout << "pcap_loop() failed: " << pcap_geterr(descr);
         return 1;
     }
 
+    if (userData.data_link == DLT_EN10MB) {
+        outputResults1(userData);
+    } else {
+
+    }
+
+    // Everything comes to an end...
+    return 0;
+}
+
+void increaseCounter(unsigned long long int &counter) {
+    counter++;
+}
+
+void outputResults1(UserData userData) {
     // Print statistics
     cout << "Number of pcap observer traffic: " << readable_bytes(userData.total_pcap_bytes) << endl;
     cout << "Number of bytes pcap actually captured: " << readable_bytes(userData.total_pcap_captured_bytes) << endl;
@@ -244,12 +270,6 @@ int main(int argc, char *argv[]) {
     cout << "Layer4 flow from " << inet_ntoa(layer4MaxFlow.source) << " port " << ntohs(layer4MaxFlow.source_port) <<
          " to " << inet_ntoa(layer4MaxFlow.destination) << " port " << ntohs(layer4MaxFlow.destination_port) <<
          ": " << readable_bytes(maxFlow) << endl;
-    // Everything comes to an end...
-    return 0;
-}
-
-void increaseCounter(unsigned long long int &counter) {
-    counter++;
 }
 
 // ethernet header has always 14 bytes
@@ -338,7 +358,7 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
             if (ip->ip_p == IPPROTO_TCP) {
                 const struct tcphdr *tcp_header;
                 // ip payload should start directly after ip header
-                tcp_header = (struct tcphdr *) (packet + ETHERNET_HEADER_SIZE + ip->ip_hl);
+                tcp_header = (struct tcphdr *) (packet + ETHERNET_HEADER_SIZE + ip_header_size);
                 // th_off is the header size in blocks of 32 bits (= 4byte)
                 int tcp_header_size = tcp_header->th_off * 4;
 
@@ -388,6 +408,51 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
         } else {
             // does never happen, remove in final version
             cout << "IP packet was not IPv4!!!" << endl;
+        }
+    }
+}
+
+
+void packetHandler2(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_char *packet) {
+    auto *ud = (struct UserData *) userData;
+
+    increaseCounter(ud->packet_counter);
+
+    // len is length of the original packet
+    ud->total_pcap_bytes += pkthdr->len;
+    // caplen is the available length in this capture
+    ud->total_pcap_captured_bytes += pkthdr->caplen;
+
+    u_int contained_packet_length = pkthdr->len;
+
+    const struct ip *ip;
+    // ip packet begins after ethernet header
+    ip = (struct ip *) (packet);
+
+    // only handle IPv4
+    if (ip->ip_v == 4) {
+        // the header length fields denotes the length in blocks of 32 bit = 4 byte
+        unsigned int ip_header_size = ip->ip_hl * 4;
+        // payload should be the total packet size minus the header size (always: contained packet length > ip_header_size)
+        unsigned int ip_packet_payload_length = 0;
+        if (ip_header_size < contained_packet_length) {
+            ip_packet_payload_length = contained_packet_length - ip_header_size;
+        } else {
+            // never happens
+            cout << "IP header greater than the available data" << endl;
+        }
+
+        if (ip->ip_p == IPPROTO_TCP) {
+            const struct tcphdr *tcp_header;
+            // ip payload should start directly after ip header
+            tcp_header = (struct tcphdr *) (packet + ip_header_size);
+            // th_off is the header size in blocks of 32 bits (= 4byte)
+            int tcp_header_size = tcp_header->th_off * 4;
+
+            // sometimes the tcp header is bigger than the possible left payload
+            if (tcp_header_size < ip_packet_payload_length) {
+
+            }
         }
     }
 }
