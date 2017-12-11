@@ -27,7 +27,8 @@ struct IPv4Flow_t {
     in_addr destination;
 
     bool const operator==(const IPv4Flow_t &o) const {
-        return source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr;
+        return (source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr)
+               || (source.s_addr == o.destination.s_addr && destination.s_addr == o.source.s_addr);
     }
 
     size_t operator()(const IPv4Flow_t &flow) const {
@@ -44,9 +45,11 @@ struct Layer4Flow_t {
     bool is_tcp;
 
     bool const operator==(const Layer4Flow_t &o) const {
-        return source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr &&
-               source_port == o.source_port
-               && destination_port == o.destination_port && is_tcp == o.is_tcp;
+        return ((source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr &&
+                 source_port == o.source_port && destination_port == o.destination_port)
+                || (source.s_addr == o.destination.s_addr && destination.s_addr == o.source.s_addr &&
+                    source_port == o.destination_port && destination_port == o.source_port))
+               && is_tcp == o.is_tcp;
     }
 
     size_t operator()(const Layer4Flow_t &flow) const {
@@ -68,8 +71,8 @@ struct UserData {
     unsigned long long int tcp_payload = 0;
     unsigned long long int total_pcap_captured_bytes = 0;
     unsigned long long int total_pcap_bytes = 0;
-    unordered_map<IPv4Flow_t, int, IPv4Flow_t> layer_3_flows;
-    unordered_map<Layer4Flow_t, int, Layer4Flow_t> layer_4_flows;
+    unordered_map<IPv4Flow_t, uint64_t , IPv4Flow_t> layer_3_flows;
+    unordered_map<Layer4Flow_t, uint64_t , Layer4Flow_t> layer_4_flows;
 };
 
 void increaseCounter(unsigned long long int &counter);
@@ -219,15 +222,28 @@ int main(int argc, char *argv[]) {
     cout << "IPv4 flows: " << userData.layer_3_flows.size() << endl;
     cout << "TCP/UPD flows: " << userData.layer_4_flows.size() << endl;
     // TODO find and output only the biggest flows
-//    for (auto &it : userData.layer_3_flows) {
-//        cout << "IPv4 flow from " << inet_ntoa(it.first.source) << " to " << inet_ntoa(it.first.destination) <<
-//             ": " << it.second << endl;
-//    }
-//    for (auto &it : userData.layer_4_flows) {
-//        cout << "Layer4 flow from " << inet_ntoa(it.first.source) << " to " << inet_ntoa(it.first.destination) <<
-//             ": " << it.second << endl;
-//    }
+    IPv4Flow_t ipv4MaxFlow = {};
+    uint64_t maxFlow = 0;
+    for (auto &it : userData.layer_3_flows) {
+        if (it.second > maxFlow) {
+            ipv4MaxFlow = it.first;
+            maxFlow = it.second;
+        }
+    }
+    cout << "Max IPv4 flow from " << inet_ntoa(ipv4MaxFlow.source) << " to " << inet_ntoa(ipv4MaxFlow.destination) <<
+         ": " << readable_bytes(maxFlow) << endl;
 
+    Layer4Flow_t layer4MaxFlow = {};
+    maxFlow = 0;
+    for (auto &it : userData.layer_4_flows) {
+        if (it.second > maxFlow) {
+            layer4MaxFlow = it.first;
+            maxFlow = it.second;
+        }
+    }
+    cout << "Layer4 flow from " << inet_ntoa(layer4MaxFlow.source) << " port " << ntohs(layer4MaxFlow.source_port) <<
+         " to " << inet_ntoa(layer4MaxFlow.destination) << " port " << ntohs(layer4MaxFlow.destination_port) <<
+         ": " << readable_bytes(maxFlow) << endl;
     // Everything comes to an end...
     return 0;
 }
