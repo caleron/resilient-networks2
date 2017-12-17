@@ -452,15 +452,19 @@ void packetHandler2(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_
             // sometimes the tcp header is bigger than the possible left payload
             if (tcp_header_size < ip_packet_payload_length) {
                 string payload((char *) (packet + ip_header_size + tcp_header_size + 4));
-                unsigned long i = payload.find("HTTP", 0, 4);
 
-                //TODO parse the header by finding \r\n in a loop until two consecutive line breaks found
+                //request starts with GET or POST, response starts with HTTP
+                if (payload.find("GET") == 0 || payload.find("POST") == 0 || payload.find("HTTP") == 0) {
 
-                if (i == 0) {
-                    cout << "found http!" << endl;
+                    unsigned long i = payload.find("Authorization: ");
+                    if (i != payload.npos) {
+                        // HTTP headers are separated by windows-style line breaks
+                        unsigned long nextBreak = payload.find("\r\n", i);
+                        // auth header name is 15 chars long
+                        string header = payload.substr(i + 15, nextBreak - i - 15);
+                        cout << "found http auth: " << header << endl;
+                    }
                 }
-
-                cout << payload << endl;
             }
         }
     }
