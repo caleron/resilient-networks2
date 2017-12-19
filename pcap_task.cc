@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <list>
 #include <set>
+#include <unordered_set>
 
 using namespace std;
 struct Layer4Flow_t;
@@ -21,9 +22,9 @@ struct IPv4Flow_t;
 
 struct UserData;
 
-void outputResults1(UserData ud);
+void outputResults1(UserData userData);
 
-string readable_bytes(uint64_t size);
+string readable_bytes(uint64_t bytes);
 
 struct IPv4Flow_t {
     in_addr source;
@@ -60,6 +61,27 @@ struct Layer4Flow_t {
     }
 };
 
+struct TcpHandshake {
+    in_addr source;
+    in_addr destination;
+    uint16_t source_port;
+    uint16_t destination_port;
+    // sequence number of the syn package from client to server or of the ack package from server to client
+    uint32_t seq = 0;
+
+    bool const operator==(const TcpHandshake &o) const {
+        return ((source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr &&
+                 source_port == o.source_port && destination_port == o.destination_port)
+                || (source.s_addr == o.destination.s_addr && destination.s_addr == o.source.s_addr &&
+                    source_port == o.destination_port && destination_port == o.source_port))
+               && seq == o.seq;
+    }
+
+    size_t operator()(const TcpHandshake &s) const {
+        return s.destination.s_addr + s.source.s_addr + s.destination_port + s.source_port + s.seq;
+    }
+};
+
 struct UserData {
     // Link type
     int data_link = 0;
@@ -76,6 +98,8 @@ struct UserData {
     unsigned long long int total_pcap_bytes = 0;
     unordered_map<IPv4Flow_t, uint64_t, IPv4Flow_t> layer_3_flows;
     unordered_map<Layer4Flow_t, uint64_t, Layer4Flow_t> layer_4_flows;
+    unordered_set<TcpHandshake, TcpHandshake> tcp_syn;
+    unordered_set<TcpHandshake, TcpHandshake> tcp_syn_ack;
 };
 
 void increaseCounter(unsigned long long int &counter);
@@ -247,7 +271,10 @@ void outputResults1(UserData userData) {
 
     cout << "IPv4 flows: " << userData.layer_3_flows.size() << endl;
     cout << "TCP/UPD flows: " << userData.layer_4_flows.size() << endl;
-    // TODO find and output only the biggest flows
+
+    cout << "TCP connections without SYN/ACK response to SYN: " << userData.tcp_syn.size() << endl;
+    cout << "TCP connections without ACK response to SYN/ACK: " << userData.tcp_syn_ack.size() << endl;
+
     IPv4Flow_t ipv4MaxFlow = {};
     uint64_t maxFlow = 0;
     for (auto &it : userData.layer_3_flows) {
@@ -378,6 +405,41 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                     }
                 }
 
+                TcpHandshake handshake{};
+                handshake.source = ip->ip_src;
+                handshake.destination = ip->ip_dst;
+                handshake.source_port = tcp_header->th_sport;
+                handshake.destination_port = tcp_header->th_dport;
+
+                // check for the tcp handshake
+                if (tcp_header->syn == 1 && tcp_header->ack == 0) {
+                    // syn package from client to server to init a connection
+                    // create a handshake object and add to the list of connection attempts
+                    handshake.seq = tcp_header->seq;
+                    ud->tcp_syn.insert(handshake);
+                } else if (tcp_header->syn == 1 && tcp_header->ack == 1) {
+                    // syn-ack package: response from server to client to a syn package
+                    // find the syn entry and update it
+                    handshake.seq = tcp_header->ack_seq - 1;
+                    if (ud->tcp_syn.count(handshake) > 0) {
+                        ud->tcp_syn.erase(handshake);
+                        handshake.seq = tcp_header->seq;
+                        ud->tcp_syn_ack.insert(handshake);
+                    }
+                } else if (tcp_header->syn == 0 && tcp_header->ack == 1) {
+                    // ack package from client to server as response to the syn-ack package
+                    handshake.seq = tcp_header->ack_seq - 1;
+                    // remove this
+                    if (ud->tcp_syn_ack.count(handshake) > 0) {
+                        ud->tcp_syn_ack.erase(handshake);
+                    }
+                } else if (tcp_header->rst == 1) {
+                    // connection failed, remove the attempt
+                    handshake.seq = tcp_header->ack_seq - 1;
+                    if (ud->tcp_syn.count(handshake) > 0) {
+                        ud->tcp_syn.erase(handshake);
+                    }
+                }
 
             } else if (ip->ip_p == IPPROTO_UDP) {
                 const struct udphdr *udp_header;
