@@ -70,15 +70,23 @@ struct TcpHandshake {
     uint32_t seq = 0;
 
     bool const operator==(const TcpHandshake &o) const {
-        return ((source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr &&
-                 source_port == o.source_port && destination_port == o.destination_port)
-                || (source.s_addr == o.destination.s_addr && destination.s_addr == o.source.s_addr &&
-                    source_port == o.destination_port && destination_port == o.source_port))
-               && seq == o.seq;
+        return source.s_addr == o.source.s_addr && destination.s_addr == o.destination.s_addr &&
+               source_port == o.source_port && destination_port == o.destination_port
+               // match with 0 in case of reset flag
+               && (o.seq == 0 || seq == 0 || seq == o.seq);
     }
 
     size_t operator()(const TcpHandshake &s) const {
-        return s.destination.s_addr + s.source.s_addr + s.destination_port + s.source_port + s.seq;
+        return s.destination.s_addr + s.source.s_addr + s.destination_port + s.source_port;
+    }
+
+    void swap() {
+        in_addr temp = source;
+        source = destination;
+        destination = temp;
+        uint16_t temp1 = source_port;
+        source_port = destination_port;
+        destination_port = temp1;
     }
 };
 
@@ -415,29 +423,48 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                 if (tcp_header->syn == 1 && tcp_header->ack == 0) {
                     // syn package from client to server to init a connection
                     // create a handshake object and add to the list of connection attempts
-                    handshake.seq = tcp_header->seq;
+                    handshake.seq = ntohl(tcp_header->seq);
                     ud->tcp_syn.insert(handshake);
                 } else if (tcp_header->syn == 1 && tcp_header->ack == 1) {
                     // syn-ack package: response from server to client to a syn package
                     // find the syn entry and update it
-                    handshake.seq = tcp_header->ack_seq - 1;
+                    handshake.seq = ntohl(tcp_header->ack_seq) - 1;
+                    handshake.swap();
                     if (ud->tcp_syn.count(handshake) > 0) {
+//                        cout << "syn seq: " << (*ud->tcp_syn.find(handshake)).seq << ", syn ack seq:"
+//                             << ntohl(tcp_header->ack_seq) << " new seq " << ntohl(tcp_header->seq) << endl;
+
                         ud->tcp_syn.erase(handshake);
-                        handshake.seq = tcp_header->seq;
+
+                        // switch back
+                        handshake.swap();
+                        handshake.seq = ntohl(tcp_header->seq);
                         ud->tcp_syn_ack.insert(handshake);
                     }
                 } else if (tcp_header->syn == 0 && tcp_header->ack == 1) {
                     // ack package from client to server as response to the syn-ack package
-                    handshake.seq = tcp_header->ack_seq - 1;
-                    // remove this
+                    handshake.seq = ntohl(tcp_header->ack_seq) - 1;
+                    // handshake complete, remove it from the list
                     if (ud->tcp_syn_ack.count(handshake) > 0) {
+//                        cout << "syn seq: " << (*ud->tcp_syn_ack.find(handshake)).seq
+//                             << ", syn ack seq:" << ntohl(tcp_header->ack_seq) << endl;
                         ud->tcp_syn_ack.erase(handshake);
                     }
                 } else if (tcp_header->rst == 1) {
                     // connection failed, remove the attempt
-                    handshake.seq = tcp_header->ack_seq - 1;
+                    handshake.seq = 0;
                     if (ud->tcp_syn.count(handshake) > 0) {
                         ud->tcp_syn.erase(handshake);
+                    }
+                    if (ud->tcp_syn_ack.count(handshake) > 0) {
+                        ud->tcp_syn_ack.erase(handshake);
+                    }
+                    handshake.swap();
+                    if (ud->tcp_syn.count(handshake) > 0) {
+                        ud->tcp_syn.erase(handshake);
+                    }
+                    if (ud->tcp_syn_ack.count(handshake) > 0) {
+                        ud->tcp_syn_ack.erase(handshake);
                     }
                 }
 
