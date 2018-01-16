@@ -1,4 +1,7 @@
+#include <algorithm>
+#include <vector>
 #include <iostream>
+#include <functional>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -279,6 +282,36 @@ void outputResults1(UserData userData) {
 
     cout << "IPv4 flows: " << userData.layer_3_flows.size() << endl;
     cout << "TCP/UPD flows: " << userData.layer_4_flows.size() << endl;
+
+
+    std::multimap<string, int> m;
+    std::multimap<int, string> m2;
+
+    for (auto &elem : userData.tcp_syn_ack) {
+
+            char str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(elem.destination), str, INET_ADDRSTRLEN);
+
+        std::multimap<string, int>::iterator it = m.find(str);
+        if (it != m.end()){
+            it->second = (it->second+1);
+        }
+        else{
+            m.insert(std::make_pair(str, 1)); 
+        }
+    }
+
+    for(multimap<string,int>::iterator it = m.begin(); it != m.end(); ++it) {
+        //cout << it->first << " - " << it->second << "\n";
+        m2.insert(std::make_pair(it->second, it->first));
+    }
+    int ipcount = 0;
+    for(multimap<int,string>::reverse_iterator it = m2.rbegin(); it != m2.rend(); ++it) {
+        if(ipcount >= 50) break;
+        cout << it->first << " - " << it->second << "\n";
+        ipcount++;
+    }
+
 
     cout << "TCP connections without SYN/ACK response to SYN: " << userData.tcp_syn.size() << endl;
     cout << "TCP connections without ACK response to SYN/ACK: " << userData.tcp_syn_ack.size() << endl;
