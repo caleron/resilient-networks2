@@ -542,7 +542,7 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
             } else if (ip->ip_p == IPPROTO_UDP) {
                 const struct udphdr *udp_header;
                 // ip payload should start directly after ip header
-                udp_header = (struct udphdr *) (packet + ETHERNET_HEADER_SIZE + ip->ip_hl);
+                udp_header = (struct udphdr *) (packet + ETHERNET_HEADER_SIZE + ip_header_size);
 
 
                 // udp payload is total length minus header length
