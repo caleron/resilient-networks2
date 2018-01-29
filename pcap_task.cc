@@ -101,6 +101,7 @@ struct UserData {
     // Whatever you need, define it here
     unsigned long long int ipv4_payload = 0;
     set<in_addr_t> found_ips;
+    std::multimap<string, int> found_icmp;
     map<uint16_t, int> layer_3_protocol_counter;
     map<uint8_t, int> layer_4_protocol_counter;
     unsigned long long int udp_payload = 0;
@@ -297,17 +298,54 @@ void outputResults1(UserData userData) {
             it->second = (it->second+1);
         }
         else{
-            m.insert(std::make_pair(str, 1)); 
+            m.insert(std::make_pair(str, 1));  
         }
     }
 
     for(multimap<string,int>::iterator it = m.begin(); it != m.end(); ++it) {
-        //cout << it->first << " - " << it->second << "\n";
         m2.insert(std::make_pair(it->second, it->first));
     }
+     cout << "Top 50 IP addresses that did not finish the three-way TCP handshake:" << endl;
     int ipcount = 0;
     for(multimap<int,string>::reverse_iterator it = m2.rbegin(); it != m2.rend(); ++it) {
         if(ipcount >= 50) break;
+        cout << it->first << " - " << it->second << "\n";
+        ipcount++;
+    }
+
+
+    cout << "Top 5 network scan suspects:" << endl;
+
+    // delete entries that are not response to syn request
+    std::multimap<string, int> found_icmp2;
+     for (auto &elem : userData.tcp_syn) {
+                char str[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &(elem.source), str, INET_ADDRSTRLEN);
+
+                std::multimap<string, int>::iterator it2 = userData.found_icmp.find(str);
+                if (it2 != userData.found_icmp.end()){
+                    // is a response
+                    // The two highest for example are no responses to unanswered syn messages
+                    // 125 - 203.13.151.236
+                    // 54 - 165.19.180.177
+                    std::multimap<string, int>::iterator it3 = found_icmp2.find(str);
+                    if (it3 == found_icmp2.end()){
+                        // is not already in list
+                        found_icmp2.insert(std::make_pair(it2->first, it2->second));
+                    }
+                }
+    }
+
+
+    std::multimap<int, string> found_icmp3;
+
+    for(multimap<string, int>::iterator it = found_icmp2.begin(); it != found_icmp2.end(); ++it) {
+        found_icmp3.insert(std::make_pair(it->second, it->first));
+    }
+
+    ipcount = 0;
+    for(multimap<int,string>::reverse_iterator it = found_icmp3.rbegin(); it != found_icmp3.rend(); ++it) {
+        if(ipcount >= 5) break;
         cout << it->first << " - " << it->second << "\n";
         ipcount++;
     }
@@ -430,6 +468,7 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                 // th_off is the header size in blocks of 32 bits (= 4byte)
                 int tcp_header_size = tcp_header->th_off * 4;
 
+
                 // sometimes the tcp header is bigger than the possible left payload
                 if (tcp_header_size < ip_packet_payload_length) {
                     ud->tcp_payload += ip_packet_payload_length - tcp_header_size;
@@ -500,11 +539,11 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                         ud->tcp_syn_ack.erase(handshake);
                     }
                 }
-
             } else if (ip->ip_p == IPPROTO_UDP) {
                 const struct udphdr *udp_header;
                 // ip payload should start directly after ip header
                 udp_header = (struct udphdr *) (packet + ETHERNET_HEADER_SIZE + ip->ip_hl);
+
 
                 // udp payload is total length minus header length
                 if (UDP_HEADER_SIZE < ip_packet_payload_length) {
@@ -526,7 +565,28 @@ void packetHandler(u_char *userData, const struct pcap_pkthdr *pkthdr, const u_c
                     // never happens
                     cout << "udp header greater than remaining payload" << endl;
                 }
+            }  else if (ip->ip_p == IPPROTO_ICMP) {
+                const struct icmphdr *icmp_header;
+
+                icmp_header = (struct icmphdr *) (packet + ETHERNET_HEADER_SIZE + ip_header_size);
+
+                if (icmp_header->type == ICMP_DEST_UNREACH && icmp_header->code == ICMP_PORT_UNREACH){
+                    char str[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &(ip->ip_dst.s_addr), str, INET_ADDRSTRLEN);
+
+
+                    std::multimap<string, int>::iterator it = ud->found_icmp.find(str);
+                    if (it != ud->found_icmp.end()){
+                        it->second = (it->second+1);
+                    }
+                    else{
+                        ud->found_icmp.insert(std::make_pair(str, 1)); 
+                    }
+
+                }
+
             }
+
         } else {
             // does never happen, remove in final version
             cout << "IP packet was not IPv4!!!" << endl;
