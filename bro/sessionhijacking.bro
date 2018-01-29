@@ -15,10 +15,10 @@ const twitter_cookie_keys = set("_twitter_sess", "auth_token");
 
 type CookieData: record
 {
-    ip: addr;           		## IP address of the user.
-    user_agent: string;     		## User-Agent header.
-    timestamp: time;       	 	## Last time we saw the cookie from this user.
-    timestamp_readable: string;        	## Last time we saw the cookie from this user
+    ip: addr;
+    user_agent: string;
+    timestamp: time;
+    timestamp_readable: string;
 };
 
 global cookies: table[string] of CookieData;
